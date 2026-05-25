@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SANKA",
+  "version": "0.2.0",
+  "identifier": "com.kid.sanka",
+  "build": {
+    "beforeDevCommand": "node scripts/setup-bin.mjs && npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "node scripts/setup-bin.mjs && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "SANKA",
+        "width": 960,
+        "height": 640,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": "v1Compatible",
+    "macOS": {
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 440
+        }
+      }
+    },
+    "resources": [
+      "../bin/active/**/*"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Chikomago/Sanka/releases/latest/download/updater.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4QTE0REMzMTY2QzNFODgKUldTSVBtd1d3MDJoeUJTZjNENnJQOHZXdnJSUUpaRzRoZDdScWhZa1F1dXBQWDNld2pVYUE3RHMK"
+    }
+  }
+}

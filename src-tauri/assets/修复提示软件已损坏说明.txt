@@ -1,0 +1,10 @@
+如果打开 SANKA 时提示“已损坏，无法打开”，由于 macOS 的安全机制限制（未签名应用），请按以下步骤操作：
+
+1. 先将 SANKA.app 拖入 Applications（应用程序）文件夹中
+2. 打开 Mac 自带的【终端】(Terminal)
+3. 复制并粘贴以下命令到终端，按回车：
+
+sudo xattr -r -d com.apple.quarantine /Applications/SANKA.app
+
+4. 提示输入密码，请输入你的 Mac 开机密码（输入时不会显示字符，输完按回车即可）
+5. 正常打开SANKA

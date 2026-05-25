@@ -1,0 +1,34 @@
+import { invoke } from "@tauri-apps/api/core";
+
+export interface AppConfig {
+    registry_url: string;
+    bun_registry: string;
+}
+
+let cachedConfig: AppConfig | null = null;
+
+export async function getConfig(): Promise<AppConfig> {
+    if (cachedConfig) {
+        return cachedConfig;
+    }
+    try {
+        const config = await invoke<AppConfig>("get_config");
+        cachedConfig = config;
+        return config;
+    } catch (e) {
+        console.error("Failed to load config:", e);
+        return {
+            registry_url: "https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json",
+            bun_registry: "",
+        };
+    }
+}
+
+export async function saveConfig(config: AppConfig): Promise<void> {
+    await invoke("save_config", { config });
+    cachedConfig = config;
+}
+
+export function clearConfigCache() {
+    cachedConfig = null;
+}
