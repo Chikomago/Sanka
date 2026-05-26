@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LayoutGrid, Compass, Package, Settings, MessageSquareDiff, ScrollText, Github } from "lucide-react";
+import { LayoutGrid, Compass, Package, Settings, ScrollText, Github } from "lucide-react";
 
 interface SidebarProps {
     hasUpdate?: boolean;
