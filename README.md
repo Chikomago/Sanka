@@ -39,4 +39,5 @@ npm run tauri build
 ##源地址收录
 
 插件源 https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json
+
 UV推荐镜像源 https://mirror.ghproxy.com/
