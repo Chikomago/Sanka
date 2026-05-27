@@ -60,11 +60,13 @@ pub struct Manifest {
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct AppConfig {
     #[serde(default)]
-    pub registry_url: String,
+    pub registry_urls: Vec<String>,
     #[serde(default)]
     pub npm_registry: String,
     #[serde(default)]
     pub bun_registry: String,
+    #[serde(default)]
+    pub uv_mirror_url: String,
 }
 
 // --- Helpers ---
@@ -112,9 +114,12 @@ async fn get_config(app: AppHandle) -> Result<AppConfig, String> {
     let config_path = get_config_path(&app)?;
     if !config_path.exists() {
         return Ok(AppConfig {
-            registry_url: "https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json".to_string(),
+            registry_urls: vec![],
             npm_registry: "".to_string(),
             bun_registry: "".to_string(),
+            uv_mirror_url: "".to_string(),
+            python_mirror_url: "https://registry.npmmirror.com/-/binary/python/".to_string(),
+            node_mirror_url: "https://registry.npmmirror.com/-/binary/node/".to_string(),
         });
     }
     let content = fs::read_to_string(config_path).map_err(|e| e.to_string())?;
@@ -265,31 +270,133 @@ async fn download_tool(
 }
 
 fn get_uv_path(app: &AppHandle) -> Result<String, String> {
-    use tauri::Manager;
-    let res_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-    
+    let app_dir = get_platform_app_dir(app)?;
     let uv_name = if cfg!(target_os = "windows") { "uv.exe" } else { "uv" };
+    let uv_bin = app_dir.join("bin").join(uv_name);
     
-    // Try multiple candidate paths to support both dev and production environments
-    let candidates = vec![
-        // Production: Tauri converts "../bin/active" → "_up_/bin/active"
-        res_dir.join("_up_").join("bin").join("active").join(uv_name),
-        // Dev: resource_dir is src-tauri/, so ../bin/active/uv
-        res_dir.join("..").join("bin").join("active").join(uv_name),
-    ];
-    
-    let uv_bin = candidates.into_iter()
-        .find(|p| p.exists())
-        .ok_or_else(|| format!("uv binary not found. Searched in resource_dir: {:?}", res_dir))?;
-    
-    // Ensure execute permission on macOS/Linux (bundling can strip it)
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&uv_bin, fs::Permissions::from_mode(0o755));
+    if uv_bin.exists() {
+        Ok(uv_bin.to_string_lossy().to_string())
+    } else {
+        Err("UV_MISSING".to_string())
     }
+}
+
+#[tauri::command]
+async fn get_uv_path_cmd(app: AppHandle) -> Result<String, String> {
+    get_uv_path(&app)
+}
+
+#[tauri::command]
+async fn check_uv_installed(app: AppHandle) -> Result<bool, String> {
+    Ok(get_uv_path(&app).is_ok())
+}
+
+#[derive(Clone, Serialize)]
+struct DownloadProgress {
+    percentage: f64,
+    message: String,
+}
+
+#[tauri::command]
+async fn download_uv(app: AppHandle) -> Result<(), String> {
+    let config = get_config(app.clone()).await?;
+    let mirror = config.uv_mirror_url.clone();
     
-    Ok(uv_bin.to_string_lossy().to_string())
+    let (target_file, is_zip) = if cfg!(target_os = "windows") {
+        ("uv-x86_64-pc-windows-msvc.zip", true)
+    } else if cfg!(target_arch = "aarch64") {
+        ("uv-aarch64-apple-darwin.tar.gz", false)
+    } else {
+        ("uv-x86_64-apple-darwin.tar.gz", false)
+    };
+
+    let download_url = format!(
+        "{}https://github.com/astral-sh/uv/releases/latest/download/{}",
+        mirror, target_file
+    );
+
+    let _ = app.emit("uv-download-progress", DownloadProgress {
+        percentage: 10.0,
+        message: "正在连接服务器...".to_string(),
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.get(&download_url).send().await.map_err(|e| e.to_string())?;
+    
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let _ = app.emit("uv-download-progress", DownloadProgress {
+        percentage: 50.0,
+        message: "正在下载...".to_string(),
+    });
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+
+    let _ = app.emit("uv-download-progress", DownloadProgress {
+        percentage: 80.0,
+        message: "正在解压配置环境...".to_string(),
+    });
+
+    let app_dir = get_platform_app_dir(&app)?;
+    let bin_dir = app_dir.join("bin");
+    if !bin_dir.exists() {
+        fs::create_dir_all(&bin_dir).map_err(|e| e.to_string())?;
+    }
+
+    if is_zip {
+        let cursor = Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(cursor).map_err(|e| e.to_string())?;
+        
+        // Extract uv.exe
+        for i in 0..archive.len() {
+            let mut file = archive.by_index(i).map_err(|e| e.to_string())?;
+            if let Some(name) = file.enclosed_name() {
+                if name.file_name().unwrap_or_default() == "uv.exe" {
+                    let mut outfile = fs::File::create(bin_dir.join("uv.exe")).map_err(|e| e.to_string())?;
+                    io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+                    break;
+                }
+            }
+        }
+    } else {
+        use flate2::read::GzDecoder;
+        use tar::Archive;
+        
+        let cursor = Cursor::new(bytes);
+        let tar = GzDecoder::new(cursor);
+        let mut archive = Archive::new(tar);
+        
+        for file in archive.entries().map_err(|e| e.to_string())? {
+            let mut file = file.map_err(|e| e.to_string())?;
+            let path = file.path().map_err(|e| e.to_string())?;
+            
+            if path.file_name().unwrap_or_default() == "uv" {
+                let out_path = bin_dir.join("uv");
+                let mut outfile = fs::File::create(&out_path).map_err(|e| e.to_string())?;
+                io::copy(&mut file, &mut outfile).map_err(|e| e.to_string())?;
+                
+                #[cfg(not(target_os = "windows"))]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = fs::set_permissions(&out_path, fs::Permissions::from_mode(0o755));
+                }
+                break;
+            }
+        }
+    }
+
+    let _ = app.emit("uv-download-progress", DownloadProgress {
+        percentage: 100.0,
+        message: "配置成功！".to_string(),
+    });
+
+    Ok(())
 }
 
 fn setup_python_venv(app: &AppHandle, tool_dir: &PathBuf) -> Result<(), String> {
@@ -751,7 +858,10 @@ pub fn run() {
             open_plugin_directory,
             get_plugin_info,
             write_bytes_to_file,
-            remove_file
+            remove_file,
+            check_uv_installed,
+            download_uv,
+            get_uv_path_cmd
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

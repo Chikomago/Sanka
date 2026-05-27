@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import JSZip from "jszip";
-import { Upload, Play, Trash2, X, FileText, Lock, RefreshCw, BookOpen, FolderOpen, FileArchive, Puzzle, ArrowDown, Copy, Check } from "lucide-react";
+import { Upload, Play, Trash2, X, FileText, RefreshCw, BookOpen, FolderOpen, FileArchive, Puzzle, ArrowDown, Copy, Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -20,80 +20,65 @@ interface LocalPlugin {
     category?: string;
     description?: string;
     local_path?: string;
-    is_encrypted: boolean;
     status: "ready" | "running";
     runtime?: string[];
     entry?: string;
 }
 
 
-const PLUGIN_STANDARD_MD = `# SANKA 插件标准规范
+const PLUGIN_STANDARD_MD = `# Sanka 本地插件规范
+
+欢迎为 Sanka 开发本地插件。只需遵循以下结构，即可在工作台一键打包与安装。
 
 ## 目录结构
 
-\`\`\`
+建议你在开发插件时，保持以下目录结构：
+
+\`\`\`text
 my-tool/
-├── plugin.json          # 必须 — 插件元数据
-├── main.py / index.js   # 必须 — 入口文件
-├── requirements.txt     # Python 插件 — pip 依赖
-├── package.json         # Node 插件 — npm 依赖
-├── README.md            # 推荐 — 使用说明
-└── ...
+├── plugin.json          # 必须 — 核心配置与元数据
+├── main.py / index.js   # 必须 — 业务逻辑入口文件
+├── requirements.txt     # Python 插件 — 声明 pip 依赖
+├── package.json         # Node 插件 — 声明 npm 依赖
+├── README.md            # 推荐 — 详细的使用说明
+└── ...                  # 其他资源文件 (如图片、配置等)
 \`\`\`
 
-## plugin.json 字段
+## plugin.json 配置指南
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| \`id\` | string | ✅ | 全局唯一标识符 |
-| \`name\` | string | ✅ | 工具显示名称 |
-| \`description\` | string | ✅ | 简短描述 (≤100 字) |
-| \`version\` | string | ✅ | 语义化版本号 |
-| \`author\` | string | ✅ | 开发者名 |
-| \`category\` | string | ✅ | 自定义分类名 |
-| \`runtime\` | string | ✅ | \`python\` 或 \`node\` |
-| \`entry\` | string | ✅ | 入口文件路径 |
-| \`platforms\` | string[] | ✅ | \`["windows"]\`, \`["macos"]\`, 或两者 |
-| \`python_version\` | string | ❌ | Python 版本要求，如 \`">=3.10"\` |
-| \`node_version\` | string | ❌ | Bun 版本要求，如 \`">=1.0"\` |
+\`plugin.json\` 是 Sanka 识别插件的唯一凭证，它定义了你的插件在 Sanka 中的展示信息和运行要求。
 
-### 版本要求字段
+| 字段名 | 数据类型 | 必填 | 详细说明 |
+|:---|:---|:---:|:---|
+| \`id\` | string | Yes | 全局唯一标识符（建议全英文/数字/连字符，如 \`my-awesome-tool\`） |
+| \`name\` | string | Yes | 插件在 Sanka 界面中显示的名称 |
+| \`description\` | string | Yes | 简短精炼的功能描述 (建议 ≤ 100 字) |
+| \`version\` | string | Yes | 语义化版本号（如 \`1.0.0\`） |
+| \`author\` | string | Yes | 插件作者或团队名称 |
+| \`category\` | string | Yes | 插件所属分类名（Sanka 会根据分类自动归档） |
+| \`runtime\` | string \| string[] | Yes | 运行环境声明，支持 \`python\` 或 \`node\` |
+| \`entry\` | string | Yes | 相对入口文件路径（如 \`src/main.py\` 或 \`index.js\`） |
+| \`platforms\` | string[] | Yes | 支持的操作系统：\`["windows"]\`, \`["macos"]\`, 或两者 |
+| \`python_version\`| string | No | （仅 Python）版本约束条件，如 \`">=3.10"\` |
+| \`node_version\` | string | No | （仅 Node）版本约束条件，如 \`">=18.0"\` |
 
-\`python_version\` 和 \`node_version\` 用于声明运行环境版本要求：
+### 运行环境约束规则
 
-**语法格式：**
-- \`>=3.8\` - 大于等于 3.8
-- \`>=3.10,<3.12\` - 大于等于 3.10 且小于 3.12
-- \`~3.10\` - 兼容 3.10.x
-- \`^20.0.0\` - 兼容 20.x.x
+通过 \`python_version\` 或 \`node_version\`，你可以精确声明插件正常运行所依赖的底层环境版本。Sanka 会自动为用户匹配或提示不兼容的环境。
 
-**安装体验：**
-1. 检测系统中已安装的所有版本
-2. 弹出版本选择对话框
-3. 符合要求的版本标记「符合要求」
-4. 默认选中第一个符合要求的版本
+**支持的语法规范：**
+- \`>=3.8\` - 大于或等于 3.8 版本
+- \`>=3.10,<3.12\` - 区间限制（大于等于 3.10 且严格小于 3.12）
+- \`~3.10\` - 自动兼容该次要版本下的所有补丁版本（如 3.10.x）
+- \`^20.0.0\` - 兼容该主版本（如 20.x.x）
 
-## 密码保护说明
+## 安装与分发流程
 
-插件是否受密码保护由 **上传时是否设置密码** 决定，无需在 plugin.json 中声明：
+由于 Sanka 已切换为高度隐私的纯本地运行架构，你可以轻松地将开发的插件分发给他人或在多台设备间漫游：
 
-- 上传时勾选「设置获取密码」即自动标记为受密码保护
-- 密码使用 bcrypt 哈希存储，不会明文保存
-- 下载时需输入密码，服务端验证通过后才允许下载
-- **本地运行时无需密码**，已下载的插件可直接启动使用
-- 服务端仅存储插件文件和密码哈希，**不执行任何加密/解密操作**
-- 不设置密码即为普通插件
-- **忘记密码**：管理员可在服务端管理面板的插件详情中修改或取消密码
-
-> **重要说明**：密码保护仅是访问控制机制，插件 ZIP 文件本身**未加密存储**。密码验证通过后，用户下载的是原始未加密文件。因此不存在解密过程。
-
-## 上传流程
-
-1. 按规范准备好插件目录
-2. 打包为 \`.zip\` 文件
-3. 在 **工作台** 点击 **上传插件**
-4. 可选设置获取密码（密码保护）
-5. 可选勾选「提交到 Store」（需服务端审核）
+1. **准备**：确保插件目录包含规范的 \`plugin.json\` 与入口代码文件。
+2. **打包**：将该插件目录下的所有文件压缩为一个标准的 \`.zip\` 格式包。
+3. **安装**：在 Sanka 的 **工作台** 页面，点击右上角的 **本地安装插件** 按钮，选择你的 ZIP 包。Sanka会解析、分配沙盒并一键安装依赖和启动！
 `;
 
 const PythonIcon = ({ size = 14 }: { size?: number }) => (
@@ -236,7 +221,7 @@ export function Dashboard() {
         try {
             log("Dashboard", `正在启动插件 ${plugin.id}...`);
             await invoke("run_tool", { id: plugin.id });
-            log("Dashboard", `✅ 插件 ${plugin.id} 启动请求已发送`);
+            log("Dashboard", `插件 ${plugin.id} 启动请求已发送`);
         } catch (e: any) {
             console.error("Failed to run tool:", e);
             log("Dashboard", `❌ 启动插件 ${plugin.id} 失败：${e.message || e}`, "STDERR");
@@ -254,7 +239,7 @@ export function Dashboard() {
                     delete manifest.installed_tools[id];
                     await invoke("save_manifest", { manifest });
                     setInstalled((prev) => prev.filter((p) => p.id !== id));
-                    log("Dashboard", `✅ 插件 ${id} 卸载成功，已删除插件目录及虚拟环境`);
+                    log("Dashboard", `插件 ${id} 卸载成功，已删除插件目录及虚拟环境`);
                 }
             } catch (e: any) {
                 console.error("Failed to remove tool:", e);
@@ -307,7 +292,7 @@ export function Dashboard() {
                 bunPath: null,
             });
 
-            log("Dashboard", `✅ ${plugin.name} 依赖重建成功`);
+            log("Dashboard", `${plugin.name} 依赖重建成功`);
             showAlert("success", "重建成功", `${plugin.name} 依赖重建成功！`);
         } catch (e: any) {
             console.error(e);
@@ -368,7 +353,6 @@ export function Dashboard() {
                                         {plugin.runtime && <RuntimeBadge runtime={plugin.runtime} />}
                                     </div>
                                     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                                        {plugin.is_encrypted && <Lock size={12} className="installed-lock" />}
                                         <button
                                             className="action-btn doc-btn"
                                             title="查看文档"
@@ -665,12 +649,11 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
                 name: result.name,
                 author: result.author,
                 category: result.category,
-                is_encrypted: false,
                 runtime: runtimeArr,
                 entry: result.entry,
             };
             await invoke("save_manifest", { manifest });
-            log("Dashboard", `✅ 本地安装成功，插件：${result.name} v${result.version}`);
+            log("Dashboard", `本地安装成功，插件：${result.name} v${result.version}`);
 
             showAlert("success", "安装成功", `插件：${result.name} v${result.version}\n作者：${result.author}`, () => { onClose(); onInstall(); });
 

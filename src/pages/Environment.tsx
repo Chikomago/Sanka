@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { CheckCircle, XCircle, Download, RefreshCw, Loader, Trash2, ChevronDown, ChevronUp } from "lucide-react";
-import { resolveResource } from "@tauri-apps/api/path";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import "./Environment.css";
 
@@ -42,11 +43,10 @@ function log(source: string, message: string, stream: "STDOUT" | "STDERR" = "STD
 
 // ==================== UV Path Helper ====================
 async function getUvPath(): Promise<string> {
-    const isWindows = navigator.userAgent.toLowerCase().includes("windows");
-    if (isWindows) {
-        return await resolveResource("_up_/bin/active/uv.exe");
-    } else {
-        return await resolveResource("_up_/bin/active/uv");
+    try {
+        return await invoke<string>("get_uv_path_cmd");
+    } catch {
+        throw new Error("UV_MISSING");
     }
 }
 
@@ -235,7 +235,7 @@ async function runShell(source: string, script: string, silent = false): Promise
         cmd.stderr.on("data", (l: string) => log(source, l, "STDERR"));
         const r = await cmd.execute();
         if (r.code === 0) {
-            if (!silent) log(source, "✅ 操作完成！");
+            if (!silent) log(source, "操作完成！");
             return true;
         } else {
             if (!silent) log(source, `❌ 失败 (exit ${r.code})`, "STDERR");
@@ -518,17 +518,47 @@ export function EnvironmentPage() {
     const [pyExpanded, setPyExpanded] = useState(false);
     const [nodeExpanded, setNodeExpanded] = useState(false);
 
+    // UV specific states
+    const [uvInstalled, setUvInstalled] = useState<boolean | null>(null);
+    const [uvDownloading, setUvDownloading] = useState<boolean>(false);
+    const [uvProgress, setUvProgress] = useState<{ percentage: number; message: string }>({ percentage: 0, message: "" });
+
     useEffect(() => {
         const unsub = subscribeEnvStatus(setStatus);
-        if (_globalEnvStatus.python === "checking" && _globalEnvStatus.node === "checking") {
-            checkEnvironments();
-        }
-        return unsub;
+
+        // Always check UV on mount to ensure lock overlay is accurate
+        checkUvStatus().then((hasUv) => {
+            if (hasUv && _globalEnvStatus.python === "checking" && _globalEnvStatus.node === "checking") {
+                checkEnvironments();
+            }
+        });
+
+        const unlistenPromise = listen<{ percentage: number; message: string }>("uv-download-progress", (event) => {
+            setUvProgress(event.payload);
+        });
+
+        return () => {
+            unsub();
+            unlistenPromise.then(f => f());
+        };
     }, []);
+
+    async function checkUvStatus() {
+        try {
+            const hasUv = await invoke<boolean>("check_uv_installed");
+            setUvInstalled(hasUv);
+            return hasUv;
+        } catch {
+            setUvInstalled(false);
+            return false;
+        }
+    }
 
     async function checkEnvironments() {
         const s: EnvStatus = { python: "checking", node: "checking", pythonVersions: [], nodeVersions: [], hasBrew: false };
         setGlobalEnvStatus({ ...s }); setStatus({ ...s });
+
+        await checkUvStatus();
 
         s.hasBrew = await detectBrew();
         if (!s.hasBrew) setInstallMethod("nvm");
@@ -612,11 +642,11 @@ export function EnvironmentPage() {
 
         if (nowInstalled) {
             const installed = newVersions.versions.find(v => v.version === pythonVersion);
-            log("Python", `✅ Python 安装成功！`);
+            log("Python", `Python 安装成功！`);
             log("Python", `版本号: Python ${installed?.version || pythonVersion}`);
             log("Python", `路径: ${installed?.path || "由 uv 管理"}`);
         } else if (success) {
-            log("Python", `✅ 安装命令执行完成，正在验证...`);
+            log("Python", `安装命令执行完成，正在验证...`);
             if (isWindows) {
                 await runShell("Python", `& '${uvPath}' python list --only-installed`, false);
             } else {
@@ -708,11 +738,11 @@ fi
         const nowInstalled = newVersions.versions.length > 0;
 
         if (nowInstalled) {
-            log("Node.js", `✅ Node.js 安装成功！`);
+            log("Node.js", `Node.js 安装成功！`);
             log("Node.js", `版本号: Node.js ${newVersions.versions[0]?.version}`);
             log("Node.js", `路径: ${newVersions.versions[0]?.path}`);
         } else if (success) {
-            log("Node.js", `✅ 安装命令执行完成，请重新检测环境`);
+            log("Node.js", `安装命令执行完成，请重新检测环境`);
         } else if (!isWindows && installMethod !== "official") {
             log("Node.js", `⚠️ 安装过程可能未完全成功，请检查上方日志`, "STDERR");
         }
@@ -771,7 +801,7 @@ nvm deactivate 2>/dev/null || true
 nvm uninstall ${verWithV} 2>&1
                 `, true);
             } else if (v.path === "/usr/local/bin/node" || v.path.includes("/usr/local/bin/")) {
-                log("Node.js", `正在卸载官方固件，这可能需要验证您的管理员密码...`);
+                log("Node.js", `正在卸载官方固件，这可能需要验证管理员密码...`);
                 await runShell("Node.js", `
 osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /usr/local/lib/node_modules/npm /usr/local/include/node /usr/local/share/man/man1/node.1 /usr/local/lib/dtrace/node.d" with administrator privileges'
                 `, true);
@@ -780,6 +810,24 @@ osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /us
             }
         }
         await checkNodeOnly();
+    }
+
+    async function handleDownloadUv(): Promise<boolean> {
+        setUvDownloading(true);
+        setUvProgress({ percentage: 0, message: "准备下载..." });
+        try {
+            await invoke("download_uv");
+            setUvInstalled(true);
+            // Re-check environments after downloading UV
+            await checkEnvironments();
+            return true;
+        } catch (e: any) {
+            console.error("Failed to download UV:", e);
+            alert("下载失败: " + e);
+            return false;
+        } finally {
+            setUvDownloading(false);
+        }
     }
 
     return (
@@ -800,16 +848,40 @@ osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /us
             </div>
 
             <div className="env-cards">
-                <PythonCard
-                    status={status.python}
-                    installedVersions={status.pythonVersions}
-                    selectedVersion={pythonVersion}
-                    onVersionChange={setPythonVersion}
-                    onInstall={installPython}
-                    onUninstall={uninstallPython}
-                    isExpanded={pyExpanded}
-                    onToggleExpand={() => setPyExpanded(!pyExpanded)}
-                />
+                <div style={{ position: "relative" }}>
+                    {uvInstalled === false && (
+                        <div className="uv-lock-overlay" style={{ backdropFilter: "blur(4px)", background: "rgba(0,0,0,0)" }}>
+                            {uvDownloading ? (
+                                <div className="uv-progress-container" style={{ width: "80%", maxWidth: "300px", textAlign: "center" }}>
+                                    <div className="uv-progress-bar">
+                                        <div className="uv-progress-fill" style={{ width: `${uvProgress.percentage}%` }}></div>
+                                    </div>
+                                    <p className="uv-progress-text" style={{ marginTop: "8px", fontWeight: 500 }}>
+                                        {uvProgress.message} ({uvProgress.percentage}%)
+                                    </p>
+                                </div>
+                            ) : (
+                                <button className="uv-download-btn" onClick={handleDownloadUv} style={{ width: "auto", padding: "10px 24px", boxShadow: "0 4px 12px rgba(0,0,0,0.15)" }}>
+                                    <Download size={16} style={{ marginRight: "8px" }} />
+                                    初始化Python UV包管理器
+                                </button>
+                            )}
+                        </div>
+                    )}
+
+                    <div style={{ opacity: uvInstalled !== true ? 0.3 : 1, pointerEvents: uvInstalled !== true ? "none" : "auto" }}>
+                        <PythonCard
+                            status={status.python}
+                            installedVersions={status.pythonVersions}
+                            selectedVersion={pythonVersion}
+                            onVersionChange={setPythonVersion}
+                            onInstall={installPython}
+                            onUninstall={uninstallPython}
+                            isExpanded={pyExpanded}
+                            onToggleExpand={() => setPyExpanded(!pyExpanded)}
+                        />
+                    </div>
+                </div>
 
                 <NodeCard
                     status={status.node}

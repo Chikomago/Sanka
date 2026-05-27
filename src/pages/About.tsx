@@ -20,7 +20,7 @@ export function AboutPage({ currentVersion, updateInfo, onCheckUpdate, onPerform
         <div className="page-container about-page">
             <div className="page-header">
                 <h2 className="page-title">关于</h2>
-                <p className="page-subtitle">轻量级、插件化的资源调度引擎</p>
+                <p className="page-subtitle">轻量级、插件化的脚本解析和发布平台</p>
             </div>
 
             <div className="about-content">

@@ -1,8 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
 export interface AppConfig {
-    registry_url: string;
+    registry_urls: string[];
     bun_registry: string;
+    uv_mirror_url: string;
 }
 
 let cachedConfig: AppConfig | null = null;
@@ -18,8 +19,9 @@ export async function getConfig(): Promise<AppConfig> {
     } catch (e) {
         console.error("Failed to load config:", e);
         return {
-            registry_url: "https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json",
+            registry_urls: [],
             bun_registry: "",
+            uv_mirror_url: "",
         };
     }
 }

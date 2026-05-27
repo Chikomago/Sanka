@@ -435,3 +435,89 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
+
+/* UV Lock Overlay */
+.uv-lock-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+}
+
+.uv-lock-content {
+    padding: 32px;
+    border-radius: 16px;
+    max-width: 400px;
+    text-align: center;
+    background: rgba(var(--bg-primary-rgb), 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border-glass);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.uv-lock-content h3 {
+    font-size: 1.2rem;
+    color: var(--text-primary);
+    margin-bottom: 12px;
+}
+
+.uv-lock-content p {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 24px;
+}
+
+.uv-download-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    padding: 12px 24px;
+    border-radius: 10px;
+    background: var(--accent-color);
+    color: #fff;
+    font-weight: 500;
+    font-size: 0.95rem;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.uv-download-btn:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+}
+
+.uv-progress-container {
+    width: 100%;
+    margin-top: 16px;
+}
+
+.uv-progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 8px;
+}
+
+.uv-progress-fill {
+    height: 100%;
+    background: var(--accent-color);
+    border-radius: 4px;
+    transition: width 0.3s ease;
+}
+
+.uv-progress-text {
+    font-size: 0.75rem !important;
+    color: var(--text-muted) !important;
+    margin-bottom: 0 !important;
+}

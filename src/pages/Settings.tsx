@@ -3,24 +3,27 @@ import { getConfig, saveConfig, type AppConfig } from "../utils/config";
 import "./Settings.css";
 
 export function SettingsPage() {
-    const [registryUrl, setRegistryUrl] = useState("");
+    const [registryUrls, setRegistryUrls] = useState("");
+    const [uvMirrorUrl, setUvMirrorUrl] = useState("");
     const [loading, setLoading] = useState(true);
 
     const saveTimerRef = useRef<number | null>(null);
 
     useEffect(() => {
         getConfig().then((config) => {
-            setRegistryUrl(config.registry_url || "https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json");
+            setRegistryUrls((config.registry_urls || []).join("\n"));
+            setUvMirrorUrl(config.uv_mirror_url || "");
             setLoading(false);
         });
     }, []);
 
     const saveSettings = async () => {
-        const cleanedUrl = registryUrl.trim();
+        const cleanedUrls = registryUrls.split("\n").map(u => u.trim()).filter(Boolean);
 
         const config: AppConfig = {
-            registry_url: cleanedUrl,
+            registry_urls: cleanedUrls,
             bun_registry: "",
+            uv_mirror_url: uvMirrorUrl.trim(),
         };
 
         try {
@@ -48,7 +51,7 @@ export function SettingsPage() {
                 clearTimeout(saveTimerRef.current);
             }
         };
-    }, [registryUrl]);
+    }, [registryUrls, uvMirrorUrl]);
 
     if (loading) {
         return (
@@ -71,21 +74,38 @@ export function SettingsPage() {
 
                 {/* Registry Config */}
                 <div className="settings-section glass">
-                    <h3 className="settings-section-title">插件源</h3>
+                    <h3 className="settings-section-title">源配置</h3>
 
                     <div className="mirror-form">
                         <label className="mirror-label">
-                            自定义插件源地址 (Registry URL)
-                            <input
+                            自定义插件源地址 (多源支持)
+                            <textarea
                                 className="mirror-input"
-                                type="text"
-                                placeholder="https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json"
-                                value={registryUrl}
-                                onChange={(e) => setRegistryUrl(e.target.value)}
+                                placeholder="输入插件市场的数据源 URL，每行一个..."
+                                value={registryUrls}
+                                onChange={(e) => setRegistryUrls(e.target.value)}
+                                rows={3}
+                                style={{ resize: 'vertical' }}
                             />
                         </label>
                         <p style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
-                            客户端将从该地址获取插件市场的列表数据。默认为官方 GitHub 插件源。
+                            客户端将从该地址获取插件市场的列表数据。配置多个源时请每行填写一个。
+                        </p>
+                    </div>
+
+                    <div className="mirror-form" style={{ marginTop: '20px' }}>
+                        <label className="mirror-label">
+                            UV镜像站地址
+                            <input
+                                className="mirror-input"
+                                type="text"
+                                placeholder="输入加速镜像 URL"
+                                value={uvMirrorUrl}
+                                onChange={(e) => setUvMirrorUrl(e.target.value)}
+                            />
+                        </label>
+                        <p style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
+                            下载UV时使用的镜像站地址。清空则使用官方Github直连。
                         </p>
                     </div>
                 </div>

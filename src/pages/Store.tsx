@@ -184,17 +184,45 @@ export function Store() {
             }
 
             const config = await getConfig();
-            const registryUrl = config.registry_url || "https://raw.githubusercontent.com/Chikomago/sanka-plugins/main/registry.json";
-            log("Store", `正在从插件源 (${registryUrl}) 拉取最新列表...`);
-            const res = await fetch(`${registryUrl}`);
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            const data: ToolItem[] = await res.json();
+            const registryUrls = config.registry_urls || [];
+            
+            if (registryUrls.length === 0) {
+                log("Store", "未配置任何插件源地址，跳过拉取");
+                setTools([]);
+                return;
+            }
+            
+            log("Store", `正在并发拉取 ${registryUrls.length} 个插件源...`);
+            
+            const fetchPromises = registryUrls.map(async (url) => {
+                try {
+                    const res = await fetch(url);
+                    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                    const data: ToolItem[] = await res.json();
+                    return data;
+                } catch (err) {
+                    log("Store", `⚠️ 从源 [${url}] 拉取失败: ${err}`, "STDERR");
+                    return [] as ToolItem[];
+                }
+            });
+
+            const results = await Promise.all(fetchPromises);
+            
+            // Deduplicate and merge by tool id
+            const mergedMap = new Map<string, ToolItem>();
+            for (const toolList of results) {
+                for (const tool of toolList) {
+                    mergedMap.set(tool.id, tool);
+                }
+            }
+            
+            const data = Array.from(mergedMap.values());
 
             _globalTools = data;
             _lastFetchTime = Date.now();
             setTools(data);
 
-            log("Store", `✅ 成功拉取 ${data.length} 个插件记录`);
+            log("Store", `汇总拉取成功，共 ${data.length} 个有效插件记录`);
             // Derive categories
             const cats = new Set(data.map((t) => t.category));
             const newCats = ["全部", ...Array.from(cats)];
@@ -474,7 +502,7 @@ export function Store() {
 
             setInstalled(manifest.installed_tools);
 
-            log("Store", `✅ 安装完成。当前版本 v${effectiveVersion}`);
+            log("Store", `安装完成。当前版本 v${effectiveVersion}`);
             showAlert("success", "安装成功", `${tool.name} (v${effectiveVersion}) 安装成功！请前往工作台查看。`);
         } catch (e: any) {
             console.error(e);
