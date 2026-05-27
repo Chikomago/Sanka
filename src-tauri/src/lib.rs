@@ -67,6 +67,10 @@ pub struct AppConfig {
     pub bun_registry: String,
     #[serde(default)]
     pub uv_mirror_url: String,
+    #[serde(default)]
+    pub python_mirror_url: String,
+    #[serde(default)]
+    pub node_mirror_url: String,
 }
 
 // --- Helpers ---
@@ -179,7 +183,7 @@ async fn download_tool(
     password: Option<String>,
     runtime: Vec<String>,
     _python_path: Option<String>,
-    bun_path: Option<String>,
+    _bun_path: Option<String>,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
     let mut request = client.get(&url);
@@ -620,7 +624,7 @@ async fn rebuild_dependencies(
     app: AppHandle,
     id: String,
     _python_path: Option<String>,
-    bun_path: Option<String>,
+    _bun_path: Option<String>,
 ) -> Result<(), String> {
     let tools_dir = get_tools_dir(&app)?;
     let tool_dir = tools_dir.join(&id);
@@ -730,7 +734,7 @@ async fn install_local_plugin(
     app: AppHandle,
     zip_path: String,
     _python_path: Option<String>,
-    bun_path: Option<String>,
+    _bun_path: Option<String>,
 ) -> Result<PluginMetadata, String> {
     let tools_dir = get_tools_dir(&app)?;
     

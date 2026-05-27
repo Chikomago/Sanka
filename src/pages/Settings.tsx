@@ -78,10 +78,10 @@ export function SettingsPage() {
 
                     <div className="mirror-form">
                         <label className="mirror-label">
-                            自定义插件源地址 (多源支持)
+                            自定义插件源地址
                             <textarea
                                 className="mirror-input"
-                                placeholder="输入插件市场的数据源 URL，每行一个..."
+                                placeholder="输入插件市场的数据源 URL，一行一个..."
                                 value={registryUrls}
                                 onChange={(e) => setRegistryUrls(e.target.value)}
                                 rows={3}
