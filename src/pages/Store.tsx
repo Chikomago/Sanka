@@ -185,18 +185,25 @@ export function Store() {
 
             const config = await getConfig();
             const registryUrls = config.registry_urls || [];
-            
+            const proxyUrl = config.proxy_url || "";
+
             if (registryUrls.length === 0) {
                 log("Store", "未配置任何插件源地址，跳过拉取");
                 setTools([]);
                 return;
             }
-            
+
             log("Store", `正在并发拉取 ${registryUrls.length} 个插件源...`);
-            
+
             const fetchPromises = registryUrls.map(async (url) => {
+                let fetchUrl = url;
+                if (proxyUrl) {
+                    let cleanProxy = proxyUrl.endsWith('/') ? proxyUrl : proxyUrl + '/';
+                    let cleanUrl = url.replace(/^https?:\/\//, '');
+                    fetchUrl = cleanProxy + cleanUrl;
+                }
                 try {
-                    const res = await fetch(url);
+                    const res = await fetch(fetchUrl);
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     const data: ToolItem[] = await res.json();
                     return data;
@@ -207,7 +214,7 @@ export function Store() {
             });
 
             const results = await Promise.all(fetchPromises);
-            
+
             // Deduplicate and merge by tool id
             const mergedMap = new Map<string, ToolItem>();
             for (const toolList of results) {
@@ -215,14 +222,14 @@ export function Store() {
                     mergedMap.set(tool.id, tool);
                 }
             }
-            
+
             const data = Array.from(mergedMap.values());
 
             _globalTools = data;
             _lastFetchTime = Date.now();
             setTools(data);
 
-            log("Store", `汇总拉取成功，共 ${data.length} 个有效插件记录`);
+            log("Store", `拉取成功，共 ${data.length} 个有效插件记录`);
             // Derive categories
             const cats = new Set(data.map((t) => t.category));
             const newCats = ["全部", ...Array.from(cats)];

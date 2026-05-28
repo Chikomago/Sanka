@@ -65,8 +65,8 @@ pub struct AppConfig {
     pub npm_registry: String,
     #[serde(default)]
     pub bun_registry: String,
-    #[serde(default)]
-    pub uv_mirror_url: String,
+    #[serde(default, alias = "uv_mirror_url")]
+    pub proxy_url: String,
     #[serde(default)]
     pub python_mirror_url: String,
     #[serde(default)]
@@ -121,7 +121,7 @@ async fn get_config(app: AppHandle) -> Result<AppConfig, String> {
             registry_urls: vec![],
             npm_registry: "".to_string(),
             bun_registry: "".to_string(),
-            uv_mirror_url: "".to_string(),
+            proxy_url: "".to_string(),
             python_mirror_url: "https://registry.npmmirror.com/-/binary/python/".to_string(),
             node_mirror_url: "https://registry.npmmirror.com/-/binary/node/".to_string(),
         });
@@ -304,7 +304,7 @@ struct DownloadProgress {
 #[tauri::command]
 async fn download_uv(app: AppHandle) -> Result<(), String> {
     let config = get_config(app.clone()).await?;
-    let mirror = config.uv_mirror_url.clone();
+    let proxy_url = config.proxy_url.clone();
     
     let (target_file, is_zip) = if cfg!(target_os = "windows") {
         ("uv-x86_64-pc-windows-msvc.zip", true)
@@ -314,10 +314,13 @@ async fn download_uv(app: AppHandle) -> Result<(), String> {
         ("uv-x86_64-apple-darwin.tar.gz", false)
     };
 
-    let download_url = format!(
-        "{}https://github.com/astral-sh/uv/releases/latest/download/{}",
-        mirror, target_file
-    );
+    let base_uv_url = format!("github.com/astral-sh/uv/releases/latest/download/{}", target_file);
+    let download_url = if proxy_url.is_empty() {
+        format!("https://{}", base_uv_url)
+    } else {
+        let clean_proxy = if proxy_url.ends_with('/') { proxy_url } else { format!("{}/", proxy_url) };
+        format!("{}{}", clean_proxy, base_uv_url)
+    };
 
     let _ = app.emit("uv-download-progress", DownloadProgress {
         percentage: 10.0,

@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export interface AppConfig {
     registry_urls: string[];
     bun_registry: string;
-    uv_mirror_url: string;
+    proxy_url: string;
 }
 
 let cachedConfig: AppConfig | null = null;
@@ -21,7 +21,7 @@ export async function getConfig(): Promise<AppConfig> {
         return {
             registry_urls: [],
             bun_registry: "",
-            uv_mirror_url: "",
+            proxy_url: "",
         };
     }
 }

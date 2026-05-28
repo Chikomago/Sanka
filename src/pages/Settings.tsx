@@ -4,7 +4,7 @@ import "./Settings.css";
 
 export function SettingsPage() {
     const [registryUrls, setRegistryUrls] = useState("");
-    const [uvMirrorUrl, setUvMirrorUrl] = useState("");
+    const [proxyUrl, setProxyUrl] = useState("");
     const [loading, setLoading] = useState(true);
 
     const saveTimerRef = useRef<number | null>(null);
@@ -12,7 +12,7 @@ export function SettingsPage() {
     useEffect(() => {
         getConfig().then((config) => {
             setRegistryUrls((config.registry_urls || []).join("\n"));
-            setUvMirrorUrl(config.uv_mirror_url || "");
+            setProxyUrl(config.proxy_url || "");
             setLoading(false);
         });
     }, []);
@@ -20,10 +20,11 @@ export function SettingsPage() {
     const saveSettings = async () => {
         const cleanedUrls = registryUrls.split("\n").map(u => u.trim()).filter(Boolean);
 
+        const currentConfig = await getConfig();
         const config: AppConfig = {
+            ...currentConfig,
             registry_urls: cleanedUrls,
-            bun_registry: "",
-            uv_mirror_url: uvMirrorUrl.trim(),
+            proxy_url: proxyUrl.trim(),
         };
 
         try {
@@ -51,7 +52,7 @@ export function SettingsPage() {
                 clearTimeout(saveTimerRef.current);
             }
         };
-    }, [registryUrls, uvMirrorUrl]);
+    }, [registryUrls, proxyUrl]);
 
     if (loading) {
         return (
@@ -95,17 +96,17 @@ export function SettingsPage() {
 
                     <div className="mirror-form" style={{ marginTop: '20px' }}>
                         <label className="mirror-label">
-                            UV镜像站地址
+                            代理节点
                             <input
                                 className="mirror-input"
                                 type="text"
-                                placeholder="输入加速镜像 URL"
-                                value={uvMirrorUrl}
-                                onChange={(e) => setUvMirrorUrl(e.target.value)}
+                                placeholder="输入加速代理 URL，如 https://gh.inkchills.cn/"
+                                value={proxyUrl}
+                                onChange={(e) => setProxyUrl(e.target.value)}
                             />
                         </label>
                         <p style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
-                            下载UV时使用的镜像站地址。清空则使用官方Github直连。
+                            调用源地址和下载依赖时使用的代理节点地址。清空则直连。
                         </p>
                     </div>
                 </div>
