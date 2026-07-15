@@ -17,7 +17,7 @@ jobs:
         include:
           - platform: "macos-latest"
             artifact-name: "bundle-macos"
-            args: "--target universal-apple-darwin"
+            args: "--target universal-apple-darwin --bundles app,dmg"
             rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
           - platform: "windows-latest"
             artifact-name: "bundle-windows"
@@ -51,6 +51,30 @@ jobs:
         if: matrix.platform == 'macos-latest'
         shell: bash
         run: bash scripts/post-build-dmg.sh
+
+      - name: ensure mac updater archive
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if find src-tauri/target -path '*/release/bundle/macos/*.app.tar.gz' -type f | grep -q .; then
+            echo "macOS updater archive already exists."
+            exit 0
+          fi
+
+          APP_DIR="$(find src-tauri/target -path '*/release/bundle/macos/*.app' -type d | head -n 1)"
+          if [ -z "$APP_DIR" ]; then
+            echo "No macOS .app bundle found."
+            exit 1
+          fi
+
+          ARCHIVE="${APP_DIR}.tar.gz"
+          tar -czf "$ARCHIVE" -C "$(dirname "$APP_DIR")" "$(basename "$APP_DIR")"
+          npx tauri signer sign "$ARCHIVE" > "${ARCHIVE}.sig"
 
       - name: list bundle artifacts
         shell: bash
