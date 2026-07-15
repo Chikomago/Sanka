@@ -106,7 +106,7 @@ export function SettingsPage() {
                             />
                         </label>
                         <p style={{ fontSize: '0.85em', color: 'var(--text-muted)' }}>
-                            调用源地址和下载依赖时使用的代理节点地址。清空则直连。
+                            调用源地址、应用更新和下载依赖时使用的代理节点地址。清空则直连。
                         </p>
                     </div>
                 </div>

@@ -485,6 +485,98 @@ struct LogPayload {
     stream: String, // STDOUT or STDERR
 }
 
+fn emit_log(app: &AppHandle, id: &str, message: impl Into<String>, stream: &str) {
+    let _ = app.emit(
+        "tool-log",
+        LogPayload {
+            id: id.to_string(),
+            message: message.into(),
+            stream: stream.to_string(),
+        },
+    );
+}
+
+fn emit_command_output(app: &AppHandle, output: &std::process::Output) {
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        emit_log(app, "Python", line, "STDOUT");
+    }
+    for line in String::from_utf8_lossy(&output.stderr).lines() {
+        emit_log(app, "Python", line, "STDERR");
+    }
+}
+
+fn run_uv_python_uninstall(app: &AppHandle, uv_path: &str, version: &str) -> Result<bool, String> {
+    emit_log(app, "Python", format!("执行: uv python uninstall {} --yes", version), "STDOUT");
+
+    let mut cmd = Command::new(uv_path);
+    cmd.args(["python", "uninstall", version, "--yes"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run uv python uninstall: {}", e))?;
+    emit_command_output(app, &output);
+
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let code = output.status.code().unwrap_or(-1);
+        emit_log(app, "Python", format!("uv 卸载失败 (exit {})", code), "STDERR");
+        Ok(false)
+    }
+}
+
+fn remove_uv_python_dir(app: &AppHandle, python_path: &str, version: &str) -> Result<(), String> {
+    let path = PathBuf::from(python_path);
+    let major_minor = version.split('.').take(2).collect::<Vec<_>>().join(".");
+
+    let install_dir = path
+        .ancestors()
+        .find(|ancestor| {
+            let name = ancestor
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
+            name.starts_with(&format!("cpython-{}", version))
+                || name.starts_with(&format!("cpython-{}.", major_minor))
+        })
+        .ok_or_else(|| format!("无法从路径定位 uv Python 安装目录: {}", python_path))?;
+
+    let install_dir_text = install_dir.to_string_lossy();
+    let normalized = install_dir_text.replace('\\', "/");
+    if !normalized.contains("/uv/python/") {
+        return Err(format!("拒绝删除非 uv 管理目录: {}", install_dir_text));
+    }
+
+    emit_log(app, "Python", format!("uv 卸载失败，改为删除 uv 管理目录: {}", install_dir_text), "STDOUT");
+    fs::remove_dir_all(install_dir)
+        .map_err(|e| format!("删除 uv Python 目录失败: {}", e))?;
+    Ok(())
+}
+
+#[tauri::command]
+async fn uninstall_python_version(
+    app: AppHandle,
+    version: String,
+    python_path: String,
+) -> Result<(), String> {
+    let uv_path = get_uv_path(&app)?;
+
+    if run_uv_python_uninstall(&app, &uv_path, &version)? {
+        return Ok(());
+    }
+
+    let major_minor = version.split('.').take(2).collect::<Vec<_>>().join(".");
+    if major_minor != version && run_uv_python_uninstall(&app, &uv_path, &major_minor)? {
+        return Ok(());
+    }
+
+    remove_uv_python_dir(&app, &python_path, &version)
+}
+
 #[tauri::command]
 async fn run_tool(
     app: AppHandle,
@@ -859,7 +951,8 @@ pub fn run() {
             remove_file,
             check_uv_installed,
             download_uv,
-            get_uv_path_cmd
+            get_uv_path_cmd,
+            uninstall_python_version
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

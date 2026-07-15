@@ -824,22 +824,14 @@ fi
         setStatus((p) => ({ ...p, python: "uninstalling" }));
         log("Python", `正在卸载 Python ${v.version}...`);
 
-        const isWindows = navigator.userAgent.toLowerCase().includes("windows");
-        const uvPath = await getUvPath();
-
-        let success = false;
-        if (isWindows) {
-            success = await runShell("Python", `& '${uvPath}' python uninstall ${v.version} --yes 2>&1`);
-            if (!success) {
-                const majorMinor = v.version.split(".").slice(0, 2).join(".");
-                success = await runShell("Python", `& '${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
-            }
-        } else {
-            success = await runShell("Python", `'${uvPath}' python uninstall ${v.version} --yes 2>&1`);
-            if (!success) {
-                const majorMinor = v.version.split(".").slice(0, 2).join(".");
-                success = await runShell("Python", `'${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
-            }
+        try {
+            await invoke("uninstall_python_version", {
+                version: v.version,
+                pythonPath: v.path,
+            });
+            log("Python", `Python ${v.version} 卸载成功`);
+        } catch (e: any) {
+            log("Python", `❌ 卸载失败: ${e?.message || e}`, "STDERR");
         }
 
         await checkPythonOnly();

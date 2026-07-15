@@ -10,6 +10,7 @@ import { LogsPage } from "./pages/Logs";
 import { AboutPage } from "./pages/About";
 import { ConfirmDialog } from "./components/Dialog";
 import { getVersion } from "@tauri-apps/api/app";
+import { getConfig } from "./utils/config";
 import "./App.css";
 
 export interface UpdateInfo {
@@ -20,6 +21,12 @@ export interface UpdateInfo {
   downloading: boolean;
   progress: number;
   message: string;
+}
+
+async function getUpdaterOptions() {
+  const config = await getConfig();
+  const proxy = config.proxy_url?.trim();
+  return proxy ? { proxy } : undefined;
 }
 
 function App() {
@@ -47,7 +54,7 @@ function App() {
       setCurrentVersion(ver);
 
       const { check } = await import("@tauri-apps/plugin-updater");
-      const update = await check();
+      const update = await check(await getUpdaterOptions());
 
       if (update && update.available) {
         setUpdateInfo({
@@ -80,7 +87,7 @@ function App() {
     try {
       const { check } = await import("@tauri-apps/plugin-updater");
       const { relaunch } = await import("@tauri-apps/plugin-process");
-      const update = await check();
+      const update = await check(await getUpdaterOptions());
 
       if (update && update.available) {
         setUpdateInfo(prev => ({ ...prev, message: "正在下载更新..." }));
