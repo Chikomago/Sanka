@@ -12,6 +12,8 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 use tauri::{AppHandle, Emitter, Manager};
 use zip;
 
+const DEFAULT_PYTHON_VERSION: &str = "3.13.12";
+
 fn deserialize_runtime<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
 where
     D: serde::de::Deserializer<'de>,
@@ -46,7 +48,6 @@ pub struct InstalledTool {
     pub name: Option<String>,
     pub author: Option<String>,
     pub category: Option<String>,
-    pub is_encrypted: Option<bool>,
     #[serde(deserialize_with = "deserialize_runtime")]
     pub runtime: Vec<String>,
     pub entry: Option<String>,
@@ -179,22 +180,11 @@ async fn download_tool(
     app: AppHandle,
     id: String,
     url: String,
-    is_encrypted: bool,
-    password: Option<String>,
     runtime: Vec<String>,
-    _python_path: Option<String>,
-    _bun_path: Option<String>,
+    python_path: Option<String>,
 ) -> Result<String, String> {
     let client = reqwest::Client::new();
-    let mut request = client.get(&url);
-
-    if is_encrypted {
-        if let Some(pwd) = password {
-            request = request.header("X-Tool-Password", pwd);
-        } else {
-            return Err("Password required for encrypted tool".into());
-        }
-    }
+    let request = client.get(&url);
 
     let response = request.send().await.map_err(|e| e.to_string())?;
 
@@ -252,7 +242,7 @@ async fn download_tool(
     };
 
     if runtime.contains(&"python".to_string()) {
-        setup_python_venv(&app, &dest_dir)?;
+        setup_python_venv(&app, &dest_dir, python_path.as_deref())?;
     }
     if runtime.contains(&"bun".to_string()) || runtime.contains(&"node".to_string()) {
         let config_path = get_config_path(&app)?;
@@ -406,11 +396,15 @@ async fn download_uv(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-fn setup_python_venv(app: &AppHandle, tool_dir: &PathBuf) -> Result<(), String> {
+fn setup_python_venv(app: &AppHandle, tool_dir: &PathBuf, python_path: Option<&str>) -> Result<(), String> {
     let uv_path = get_uv_path(app)?;
+    let python = python_path
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .unwrap_or(DEFAULT_PYTHON_VERSION);
     
     let mut cmd = Command::new(&uv_path);
-    cmd.args(["venv", "--python", "3.12.13", "--clear", ".venv"])
+    cmd.args(["venv", "--python", python, "--clear", ".venv"])
         .current_dir(tool_dir);
     #[cfg(target_os = "windows")]
     cmd.creation_flags(CREATE_NO_WINDOW);
@@ -626,8 +620,7 @@ async fn run_tool(
 async fn rebuild_dependencies(
     app: AppHandle,
     id: String,
-    _python_path: Option<String>,
-    _bun_path: Option<String>,
+    python_path: Option<String>,
 ) -> Result<(), String> {
     let tools_dir = get_tools_dir(&app)?;
     let tool_dir = tools_dir.join(&id);
@@ -639,7 +632,7 @@ async fn rebuild_dependencies(
     // Check if it's a Python plugin
     let requirements_txt = tool_dir.join("requirements.txt");
     if requirements_txt.exists() {
-        setup_python_venv(&app, &tool_dir)?;
+        setup_python_venv(&app, &tool_dir, python_path.as_deref())?;
     }
 
     // Check if it's a Node.js plugin
@@ -729,15 +722,13 @@ pub struct PluginMetadata {
     pub entry: String,
     pub platforms: Vec<String>,
     pub python_version: Option<String>,
-    pub node_version: Option<String>,
 }
 
 #[tauri::command]
 async fn install_local_plugin(
     app: AppHandle,
     zip_path: String,
-    _python_path: Option<String>,
-    _bun_path: Option<String>,
+    python_path: Option<String>,
 ) -> Result<PluginMetadata, String> {
     let tools_dir = get_tools_dir(&app)?;
     
@@ -800,7 +791,7 @@ async fn install_local_plugin(
         }
         
         if metadata.runtime.contains(&"python".to_string()) {
-            setup_python_venv(&app, &dest)?;
+            setup_python_venv(&app, &dest, python_path.as_deref())?;
         }
         
         dest

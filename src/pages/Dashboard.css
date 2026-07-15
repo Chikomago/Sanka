@@ -328,7 +328,7 @@
     border-color: var(--accent-color);
 }
 
-.encrypt-password-input {
+.metadata-input {
     width: 100%;
     padding: 9px 14px;
     border-radius: 10px;
@@ -343,7 +343,7 @@
     box-sizing: border-box;
 }
 
-.encrypt-password-input:focus {
+.metadata-input:focus {
     border-color: var(--accent-color);
 }
 

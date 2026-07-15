@@ -20,6 +20,16 @@ export interface EnvStatus {
 
 let _globalEnvStatus: EnvStatus = { python: "checking", node: "checking", pythonVersions: [], nodeVersions: [], hasBrew: false };
 let _listeners: Array<(s: EnvStatus) => void> = [];
+const FALLBACK_PYTHON_INSTALL_VERSIONS = [
+    "3.13.12",
+    "3.12.13",
+    "3.11.12",
+    "3.10.17",
+    "3.9.22",
+    "3.8.20",
+    "3.7.9",
+];
+const DEFAULT_PYTHON_VERSION = FALLBACK_PYTHON_INSTALL_VERSIONS[0];
 
 export function getEnvStatus() { return _globalEnvStatus; }
 
@@ -140,6 +150,46 @@ async function detectAllPythonVersions(silent = false): Promise<{ activeVersion?
     return { activeVersion, activePath, versions };
 }
 
+async function detectInstallablePythonVersions(): Promise<string[]> {
+    try {
+        const { Command } = await import("@tauri-apps/plugin-shell");
+        const isWindows = navigator.userAgent.toLowerCase().includes("windows");
+        const uvPath = await getUvPath();
+        const cmd = isWindows
+            ? Command.create("powershell", ["-Command", `& '${uvPath}' python list`])
+            : Command.create("exec-sh", ["-c", `'${uvPath}' python list`]);
+        const result = await cmd.execute();
+
+        if (result.code !== 0) return FALLBACK_PYTHON_INSTALL_VERSIONS;
+
+        const versions = Array.from(
+            new Set(
+                (result.stdout || "")
+                    .split("\n")
+                    .map(line => line.match(/cpython-(\d+\.\d+\.\d+)/)?.[1])
+                    .filter((version): version is string => Boolean(version))
+                    .filter(version => version.startsWith("3."))
+            )
+        );
+
+        versions.sort(compareVersionsDesc);
+        return versions.length > 0 ? versions : FALLBACK_PYTHON_INSTALL_VERSIONS;
+    } catch {
+        return FALLBACK_PYTHON_INSTALL_VERSIONS;
+    }
+}
+
+function compareVersionsDesc(a: string, b: string) {
+    const partsA = a.split(".").map(Number);
+    const partsB = b.split(".").map(Number);
+    for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+        const aVal = partsA[i] || 0;
+        const bVal = partsB[i] || 0;
+        if (aVal !== bVal) return bVal - aVal;
+    }
+    return 0;
+}
+
 // ==================== Detect Node.js ====================
 async function detectAllNodeVersions(silent = false): Promise<{ activeVersion?: string; activePath?: string; versions: InstalledVersion[] }> {
     const versions: InstalledVersion[] = [];
@@ -251,6 +301,7 @@ async function runShell(source: string, script: string, silent = false): Promise
 function PythonCard({
     status,
     installedVersions,
+    installableVersions,
     selectedVersion,
     onVersionChange,
     onInstall,
@@ -260,6 +311,7 @@ function PythonCard({
 }: {
     status: "checking" | "installed" | "missing" | "installing" | "uninstalling";
     installedVersions: InstalledVersion[];
+    installableVersions: string[];
     selectedVersion: string;
     onVersionChange: (v: string) => void;
     onInstall: () => void;
@@ -322,11 +374,9 @@ function PythonCard({
                             onChange={(e) => onVersionChange(e.target.value)}
                             disabled={isOperating}
                         >
-                            <option value="3.13.12">3.13.12</option>
-                            <option value="3.12.13">3.12.13</option>
-                            <option value="3.11.12">3.11.12</option>
-                            <option value="3.10.17">3.10.17</option>
-                            <option value="3.9.22">3.9.22</option>
+                            {installableVersions.map(version => (
+                                <option key={version} value={version}>{version}</option>
+                            ))}
                         </select>
                     </div>
 
@@ -512,7 +562,8 @@ function NodeCard({
 // ==================== Main Page ====================
 export function EnvironmentPage() {
     const [status, setStatus] = useState<EnvStatus>(_globalEnvStatus);
-    const [pythonVersion, setPythonVersion] = useState<string>("3.12.13");
+    const [pythonVersion, setPythonVersion] = useState<string>(DEFAULT_PYTHON_VERSION);
+    const [installablePythonVersions, setInstallablePythonVersions] = useState<string[]>(FALLBACK_PYTHON_INSTALL_VERSIONS);
     const [installMethod, setInstallMethod] = useState<"brew" | "nvm" | "official">("brew");
     const [targetNodeVersion, setTargetNodeVersion] = useState<"v18" | "v20" | "v25">("v20");
     const [pyExpanded, setPyExpanded] = useState(false);
@@ -528,6 +579,9 @@ export function EnvironmentPage() {
 
         // Always check UV on mount to ensure lock overlay is accurate
         checkUvStatus().then((hasUv) => {
+            if (hasUv) {
+                refreshInstallablePythonVersions();
+            }
             if (hasUv && _globalEnvStatus.python === "checking" && _globalEnvStatus.node === "checking") {
                 checkEnvironments();
             }
@@ -552,6 +606,12 @@ export function EnvironmentPage() {
             setUvInstalled(false);
             return false;
         }
+    }
+
+    async function refreshInstallablePythonVersions() {
+        const versions = await detectInstallablePythonVersions();
+        setInstallablePythonVersions(versions);
+        setPythonVersion(prev => versions.includes(prev) ? prev : versions[0] || DEFAULT_PYTHON_VERSION);
     }
 
     async function checkEnvironments() {
@@ -767,11 +827,19 @@ fi
         const isWindows = navigator.userAgent.toLowerCase().includes("windows");
         const uvPath = await getUvPath();
 
-        const majorMinor = v.version.split(".").slice(0, 2).join(".");
+        let success = false;
         if (isWindows) {
-            await runShell("Python", `& '${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
+            success = await runShell("Python", `& '${uvPath}' python uninstall ${v.version} --yes 2>&1`);
+            if (!success) {
+                const majorMinor = v.version.split(".").slice(0, 2).join(".");
+                success = await runShell("Python", `& '${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
+            }
         } else {
-            await runShell("Python", `'${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
+            success = await runShell("Python", `'${uvPath}' python uninstall ${v.version} --yes 2>&1`);
+            if (!success) {
+                const majorMinor = v.version.split(".").slice(0, 2).join(".");
+                success = await runShell("Python", `'${uvPath}' python uninstall ${majorMinor} --yes 2>&1`);
+            }
         }
 
         await checkPythonOnly();
@@ -818,6 +886,7 @@ osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /us
         try {
             await invoke("download_uv");
             setUvInstalled(true);
+            await refreshInstallablePythonVersions();
             // Re-check environments after downloading UV
             await checkEnvironments();
             return true;
@@ -873,6 +942,7 @@ osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /us
                         <PythonCard
                             status={status.python}
                             installedVersions={status.pythonVersions}
+                            installableVersions={installablePythonVersions}
                             selectedVersion={pythonVersion}
                             onVersionChange={setPythonVersion}
                             onInstall={installPython}
@@ -900,4 +970,3 @@ osascript -e 'do shell script "rm -rf /usr/local/bin/npm /usr/local/bin/node /us
         </div>
     );
 }
-

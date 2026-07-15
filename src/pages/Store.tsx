@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Lock, Download, Apple, Monitor, AlertTriangle, BookOpen, X, KeyRound, Loader, ChevronDown, CheckCircle, Info, RefreshCw } from "lucide-react";
+import { Download, Apple, Monitor, AlertTriangle, BookOpen, X, Loader, ChevronDown, CheckCircle, Info, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { invoke } from "@tauri-apps/api/core";
 import ReactMarkdown from "react-markdown";
@@ -23,13 +23,11 @@ export interface ToolItem {
     version: string;
     versions: ToolVersion[];
     platforms: string[];
-    is_encrypted: boolean;
     download_url: string;
     runtime: string[];
     author: string;
     readme?: string;
     python_version?: string;
-    node_version?: string;
     entry?: string;
 }
 
@@ -106,7 +104,6 @@ export function Store() {
     const [activeCategory, setActiveCategory] = useState("全部");
     const [envStatus, setEnvStatus] = useState<EnvStatus>(getEnvStatus());
     const [readmeTool, setReadmeTool] = useState<ToolItem | null>(null);
-    const [passwordTool, setPasswordTool] = useState<{ tool: ToolItem, targetVersion?: string } | null>(null);
     const [downloading, setDownloading] = useState<string | null>(null);
     const [installed, setInstalled] = useState<Record<string, any>>({});
     const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -281,46 +278,6 @@ export function Store() {
         );
     }
 
-    /* ---- Password Unlock Modal ---- */
-    function PasswordModal({ tool, onClose, onUnlock }: { tool: ToolItem; onClose: () => void; onUnlock: (pw: string) => void }) {
-        const [password, setPassword] = useState("");
-
-        return (
-            <div className="modal-overlay" onClick={onClose}>
-                <div className="modal-content glass password-modal" onClick={(e) => e.stopPropagation()}>
-                    <div className="modal-header">
-                        <h3>
-                            <KeyRound size={16} style={{ marginRight: 8, verticalAlign: "middle" }} />
-                            解锁插件
-                        </h3>
-                        <button className="modal-close" onClick={onClose}><X size={18} /></button>
-                    </div>
-                    <div className="modal-body">
-                        <p className="password-hint">
-                            「{tool.name}」插件已启用加密保护，请输入密码以获取。
-                        </p>
-                        <input
-                            className="password-input"
-                            type="password"
-                            placeholder="请输入插件密码"
-                            value={password}
-                            onChange={(e) => setPassword(e.target.value)}
-                            onKeyDown={(e) => e.key === "Enter" && password && onUnlock(password)}
-                            autoFocus
-                        />
-                        <button
-                            className="password-submit-btn"
-                            disabled={!password}
-                            onClick={() => onUnlock(password)}
-                        >
-                            解锁并获取
-                        </button>
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     /* ---- Version Select Modal ---- */
     function VersionSelectModal({
         tool,
@@ -329,11 +286,10 @@ export function Store() {
     }: {
         tool: ToolItem;
         onClose: () => void;
-        onConfirm: (pythonPath?: string, nodePath?: string) => void;
+        onConfirm: (pythonPath?: string) => void;
     }) {
-        const runtime = tool.runtime || ["none"];
-        const versionReq = runtime.includes("python") ? tool.python_version : tool.node_version;
-        const installedVersions = runtime.includes("python") ? envStatus.pythonVersions : envStatus.nodeVersions;
+        const versionReq = tool.python_version;
+        const installedVersions = envStatus.pythonVersions;
 
         const parseVersionReq = (req?: string) => {
             if (!req) return null;
@@ -374,7 +330,7 @@ export function Store() {
                     </div>
                     <div className="modal-body">
                         <p className="version-select-hint">
-                            「{tool.name}」需要 {runtime.includes("python") ? "Python" : "Node.js"} 运行环境
+                            「{tool.name}」需要 Python 运行环境
                             {versionReq && <span className="version-req">（要求 {versionReq}）</span>}。
                             请选择用于创建虚拟环境的版本：
                         </p>
@@ -405,11 +361,7 @@ export function Store() {
                             className="version-confirm-btn"
                             disabled={!selectedPath}
                             onClick={() => {
-                                if (runtime.includes("python")) {
-                                    onConfirm(selectedPath, undefined);
-                                } else {
-                                    onConfirm(undefined, selectedPath);
-                                }
+                                onConfirm(selectedPath);
                             }}
                         >
                             确认并安装
@@ -446,30 +398,17 @@ export function Store() {
             navigate("/environment");
             return;
         }
-        if (tool.runtime?.includes("python") || tool.runtime?.includes("bun") || tool.runtime?.includes("node")) {
+        if (tool.runtime?.includes("python")) {
             setVersionSelectTool({ tool, targetVersion });
             return;
         }
-        if (tool.is_encrypted) {
-            setPasswordTool({ tool, targetVersion });
-            return;
-        }
-        performDownload(tool, null, targetVersion);
-    }
-
-    function handleUnlock(password: string) {
-        if (passwordTool) {
-            performDownload(passwordTool.tool, password, passwordTool.targetVersion);
-            setPasswordTool(null);
-        }
+        performDownload(tool, targetVersion);
     }
 
     async function performDownload(
         tool: ToolItem,
-        password: string | null,
         targetVersion?: string,
-        selectedPythonPath?: string,
-        selectedBunPath?: string
+        selectedPythonPath?: string
     ) {
         log("Store", `开始下载/安装插件: ${tool.name} (ID: ${tool.id})`);
         try {
@@ -482,11 +421,8 @@ export function Store() {
             const destDir: string = await invoke("download_tool", {
                 id: tool.id,
                 url: downloadUrl,
-                isEncrypted: tool.is_encrypted,
-                password: password,
                 runtime: tool.runtime,
-                pythonPath: selectedPythonPath,
-                bunPath: selectedBunPath
+                pythonPath: selectedPythonPath
             });
 
             log("Store", `文件已写入并准备完毕，解压路径: ${destDir}`);
@@ -501,7 +437,6 @@ export function Store() {
                 name: tool.name,
                 author: tool.author,
                 category: tool.category,
-                is_encrypted: tool.is_encrypted,
                 runtime: tool.runtime,
                 entry: tool.entry
             };
@@ -610,7 +545,6 @@ export function Store() {
                                 <button className="readme-btn" onClick={() => setReadmeTool(tool)} title="查看文档">
                                     <BookOpen size={16} />
                                 </button>
-                                {tool.is_encrypted && <Lock size={16} className="lock-icon" />}
                             </div>
                             <p className="tool-description">{tool.description}</p>
                             <div className="tool-card-footer">
@@ -725,25 +659,17 @@ export function Store() {
             )}
 
             {readmeTool && <ReadmeModal tool={readmeTool} onClose={() => setReadmeTool(null)} />}
-            {passwordTool && <PasswordModal tool={passwordTool.tool} onClose={() => setPasswordTool(null)} onUnlock={handleUnlock} />}
             {versionSelectTool && (
                 <VersionSelectModal
                     tool={versionSelectTool.tool}
                     onClose={() => setVersionSelectTool(null)}
-                    onConfirm={(pyPath, ndPath) => {
-                        if (versionSelectTool.tool.is_encrypted) {
-                            setPasswordTool(versionSelectTool);
-                            setVersionSelectTool(null);
-                        } else {
-                            performDownload(
-                                versionSelectTool.tool,
-                                null,
-                                versionSelectTool.targetVersion,
-                                pyPath,
-                                ndPath
-                            );
-                            setVersionSelectTool(null);
-                        }
+                    onConfirm={(pyPath) => {
+                        performDownload(
+                            versionSelectTool.tool,
+                            versionSelectTool.targetVersion,
+                            pyPath
+                        );
+                        setVersionSelectTool(null);
                     }}
                 />
             )}

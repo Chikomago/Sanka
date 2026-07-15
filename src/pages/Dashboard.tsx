@@ -60,17 +60,15 @@ my-tool/
 | \`entry\` | string | Yes | 相对入口文件路径（如 \`src/main.py\` 或 \`index.js\`） |
 | \`platforms\` | string[] | Yes | 支持的操作系统：\`["windows"]\`, \`["macos"]\`, 或两者 |
 | \`python_version\`| string | No | （仅 Python）版本约束条件，如 \`">=3.10"\` |
-| \`node_version\` | string | No | （仅 Node）版本约束条件，如 \`">=18.0"\` |
 
 ### 运行环境约束规则
 
-通过 \`python_version\` 或 \`node_version\`，你可以精确声明插件正常运行所依赖的底层环境版本。Sanka 会自动为用户匹配或提示不兼容的环境。
+通过 \`python_version\`，你可以精确声明插件正常运行所依赖的 Python 环境版本。Sanka 会自动为用户匹配或提示不兼容的环境。
 
 **支持的语法规范：**
 - \`>=3.8\` - 大于或等于 3.8 版本
 - \`>=3.10,<3.12\` - 区间限制（大于等于 3.10 且严格小于 3.12）
 - \`~3.10\` - 自动兼容该次要版本下的所有补丁版本（如 3.10.x）
-- \`^20.0.0\` - 兼容该主版本（如 20.x.x）
 
 ## 安装与分发流程
 
@@ -259,7 +257,7 @@ export function Dashboard() {
         }
     }
 
-    async function handleRebuild(plugin: LocalPlugin, pythonPath?: string, nodePath?: string) {
+    async function handleRebuild(plugin: LocalPlugin, pythonPath?: string) {
         try {
             setRebuilding(plugin.id);
             log("Dashboard", `正在为插件 ${plugin.name} 重新构建依赖...`);
@@ -269,14 +267,9 @@ export function Dashboard() {
             const needsNode = runtimes.includes("bun") || runtimes.includes("node");
 
             let effectivePythonPath = pythonPath;
-            let effectiveNodePath = nodePath;
 
             if (!effectivePythonPath && needsPython && envStatus.pythonVersions.length > 0) {
                 effectivePythonPath = envStatus.pythonVersions[0].path;
-            }
-            // node path is informational only — backend just calls "npm install"
-            if (!effectiveNodePath && needsNode && envStatus.nodeVersions.length > 0) {
-                effectiveNodePath = envStatus.nodeVersions[0].path;
             }
 
             if (needsPython && !effectivePythonPath) {
@@ -289,7 +282,6 @@ export function Dashboard() {
             await invoke("rebuild_dependencies", {
                 id: plugin.id,
                 pythonPath: needsPython ? effectivePythonPath : null,
-                bunPath: null,
             });
 
             log("Dashboard", `${plugin.name} 依赖重建成功`);
@@ -394,7 +386,13 @@ export function Dashboard() {
                                         <button
                                             className="action-btn rebuild-btn"
                                             title="重建依赖"
-                                            onClick={() => setShowVersionSelect({ plugin, action: 'rebuild' })}
+                                            onClick={() => {
+                                                if (plugin.runtime?.includes("python")) {
+                                                    setShowVersionSelect({ plugin, action: 'rebuild' });
+                                                } else {
+                                                    handleRebuild(plugin);
+                                                }
+                                            }}
                                             disabled={rebuilding === plugin.id}
                                         >
                                             {rebuilding === plugin.id ? (
@@ -436,9 +434,9 @@ export function Dashboard() {
                     plugin={showVersionSelect.plugin}
                     envStatus={envStatus}
                     onClose={() => setShowVersionSelect(null)}
-                    onConfirm={(pyPath, ndPath) => {
+                    onConfirm={(pyPath) => {
                         if (showVersionSelect.action === 'rebuild') {
-                            handleRebuild(showVersionSelect.plugin, pyPath, ndPath);
+                            handleRebuild(showVersionSelect.plugin, pyPath);
                         }
                         setShowVersionSelect(null);
                     }}
@@ -509,10 +507,13 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
     const showAlert = (type: DialogType, title: string, message: string, onCloseCallback?: () => void) =>
         setDialog({ open: true, type, title, message, onCloseCallback });
 
+    const [envStatus, setEnvStatus] = useState<EnvStatus>(getEnvStatus());
+    const [uploadVersionSelectPlugin, setUploadVersionSelectPlugin] = useState<LocalPlugin | null>(null);
     const [validationErrors, setValidationErrors] = useState<{ file?: boolean; meta?: boolean }>({});
     const log = (source: string, message: string, stream: "STDOUT" | "STDERR" = "STDOUT") =>
         window.dispatchEvent(new CustomEvent("tool-log-web", { detail: { id: source, message, stream } }));
 
+    useEffect(() => subscribeEnvStatus(setEnvStatus), []);
 
     async function handleSelectFile() {
         try {
@@ -575,7 +576,7 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
         }
     }
 
-    async function handleUpload() {
+    async function handleUpload(pythonPath?: string, versionSelected = false) {
         // Reset errors at start of each upload attempt
         setValidationErrors({});
         const errors: { file?: boolean; meta?: boolean } = {};
@@ -600,13 +601,28 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
             return;
         }
 
+        const runtimeArr = meta.runtime.split(",").map(s => s.trim()).filter(Boolean);
+        if (!versionSelected && runtimeArr.includes("python")) {
+            setUploadVersionSelectPlugin({
+                id: meta.id.trim(),
+                name: meta.name.trim() || meta.id.trim(),
+                version: meta.version.trim(),
+                author: meta.author.trim(),
+                category: meta.category.trim(),
+                description: meta.description.trim(),
+                runtime: runtimeArr,
+                entry: meta.entry.trim(),
+                status: "ready",
+            });
+            return;
+        }
+
         setUploading(true);
         let tempZipPath: string | null = null;
 
         try {
             // 1. Build updated plugin.json and inject it back into the ZIP
             if (!zipInstance) return;
-            const runtimeArr = meta.runtime.split(",").map(s => s.trim()).filter(Boolean);
             const platformsArr = meta.platforms.split(",").map(s => s.trim()).filter(Boolean);
             const pluginJsonContent = JSON.stringify({
                 id: meta.id.trim(),
@@ -630,14 +646,11 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
 
             // 3. Local install from the temp path
             log("Dashboard", "正在执行本地安装...");
-            const envStatus = getEnvStatus();
-            const pythonPath = envStatus.pythonVersions[0]?.path;
-            const bunPath = null; // Node.js plugins use npm, no path needed
 
             const result = await invoke<{
                 id: string; name: string; version: string; description: string;
                 author: string; category: string; runtime: string[]; entry: string; platforms: string[];
-            }>("install_local_plugin", { zipPath: tempZipPath, pythonPath, bunPath });
+            }>("install_local_plugin", { zipPath: tempZipPath, pythonPath });
 
             const manifest: any = await invoke("get_manifest");
             if (!manifest.installed_tools) manifest.installed_tools = {};
@@ -769,7 +782,7 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
                     <button
                         className="upload-submit-btn"
                         style={{ width: "100%", padding: "12px", borderRadius: "10px", border: "none", background: "var(--accent-color)", color: "white", fontWeight: 600, cursor: uploading ? "not-allowed" : "pointer" }}
-                        onClick={handleUpload}
+                        onClick={() => handleUpload()}
                         disabled={uploading}
                     >
                         {uploading ? "处理中..." : "确认安装"}
@@ -787,6 +800,19 @@ function UploadModal({ onClose, onShowDoc, onInstall }: { onClose: () => void; o
                         if (validationErrors.meta) setValidationErrors(prev => ({ ...prev, meta: false }));
                     }}
                     onClose={() => setShowMetaEditor(false)}
+                />
+            )}
+
+            {uploadVersionSelectPlugin && (
+                <VersionSelectModal
+                    plugin={uploadVersionSelectPlugin}
+                    envStatus={envStatus}
+                    mode="install"
+                    onClose={() => setUploadVersionSelectPlugin(null)}
+                    onConfirm={(pyPath) => {
+                        setUploadVersionSelectPlugin(null);
+                        handleUpload(pyPath, true);
+                    }}
                 />
             )}
 
@@ -853,50 +879,50 @@ function MetadataEditorModal({ meta, onSave, onClose }: {
                         <div style={{ display: "flex", gap: 10 }}>
                             <div style={{ flex: 2 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>插件 ID <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.id} onChange={e => setField("id", e.target.value)} placeholder="my-plugin-id" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.id} onChange={e => setField("id", e.target.value)} placeholder="my-plugin-id" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>版本 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.version} onChange={e => setField("version", e.target.value)} placeholder="1.0.0" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.version} onChange={e => setField("version", e.target.value)} placeholder="1.0.0" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 10 }}>
                             <div style={{ flex: 2 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>名称 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.name} onChange={e => setField("name", e.target.value)} placeholder="插件显示名称" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.name} onChange={e => setField("name", e.target.value)} placeholder="插件显示名称" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>作者</label>
-                                <input className="encrypt-password-input" value={tempMeta.author} onChange={e => setField("author", e.target.value)} placeholder="作者名" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.author} onChange={e => setField("author", e.target.value)} placeholder="作者名" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 10 }}>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>分类 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.category} onChange={e => setField("category", e.target.value)} placeholder="效率工具" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.category} onChange={e => setField("category", e.target.value)} placeholder="效率工具" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                             <div style={{ flex: 2 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>入口文件 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.entry} onChange={e => setField("entry", e.target.value)} placeholder="main.py 或 index.js" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.entry} onChange={e => setField("entry", e.target.value)} placeholder="main.py 或 index.js" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                         </div>
 
                         <div style={{ display: "flex", gap: 10 }}>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>运行环境 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.runtime || ""} onChange={e => setField("runtime", e.target.value)} placeholder="chrome / python / bun / none" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.runtime || ""} onChange={e => setField("runtime", e.target.value)} placeholder="chrome / python / bun / none" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                             <div style={{ flex: 1 }}>
                                 <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>支持平台 <span style={{ color: 'red' }}>*</span></label>
-                                <input className="encrypt-password-input" value={tempMeta.platforms} onChange={e => setField("platforms", e.target.value)} placeholder="windows, macos" style={{ width: "100%", boxSizing: "border-box" }} />
+                                <input className="metadata-input" value={tempMeta.platforms} onChange={e => setField("platforms", e.target.value)} placeholder="windows, macos" style={{ width: "100%", boxSizing: "border-box" }} />
                             </div>
                         </div>
 
                         <div>
                             <label style={{ fontSize: "0.8rem", color: "var(--text-primary)", fontWeight: 500, display: "block", marginBottom: 4 }}>简短描述</label>
-                            <input className="encrypt-password-input" value={tempMeta.description} onChange={e => setField("description", e.target.value)} placeholder="简短描述工具用途" style={{ width: "100%", boxSizing: "border-box" }} />
+                            <input className="metadata-input" value={tempMeta.description} onChange={e => setField("description", e.target.value)} placeholder="简短描述工具用途" style={{ width: "100%", boxSizing: "border-box" }} />
                         </div>
 
                         <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -987,26 +1013,28 @@ function PluginDocModal({ onClose }: { onClose: () => void }) {
 function VersionSelectModal({
     plugin,
     envStatus,
+    mode = "rebuild",
     onClose,
     onConfirm,
 }: {
     plugin: LocalPlugin;
     envStatus: EnvStatus;
+    mode?: "rebuild" | "install";
     onClose: () => void;
-    onConfirm: (pythonPath?: string, nodePath?: string) => void;
+    onConfirm: (pythonPath?: string) => void;
 }) {
     const runtime = plugin.runtime || ["python"];
     const isPythonPlugin = runtime.includes("python");
 
     const getBestVersion = (rt: string[]) => {
-        let candidates = rt.includes("python") ? envStatus.pythonVersions : envStatus.nodeVersions;
+        let candidates = rt.includes("python") ? envStatus.pythonVersions : [];
         return candidates[0]?.path || "";
     };
 
     const [selectedPath, setSelectedPath] = useState(getBestVersion(runtime));
 
-    const versions = isPythonPlugin ? envStatus.pythonVersions : envStatus.nodeVersions;
-    const envName = isPythonPlugin ? "Python" : "Node.js";
+    const versions = isPythonPlugin ? envStatus.pythonVersions : [];
+    const isInstallMode = mode === "install";
 
     return createPortal(
         <div className="modal-overlay" onClick={onClose}>
@@ -1014,18 +1042,18 @@ function VersionSelectModal({
                 <div className="modal-header">
                     <h3>
                         <RefreshCw size={16} style={{ marginRight: 8, verticalAlign: "middle" }} />
-                        重建依赖
+                        {isInstallMode ? "选择运行版本" : "重建依赖"}
                     </h3>
                     <button className="modal-close" onClick={onClose}><X size={18} /></button>
                 </div>
                 <div className="modal-body">
                     <p className="version-select-hint">
-                        「{plugin.name}」插件需要重建依赖。请选择 {envName} 运行环境版本：
+                        「{plugin.name}」插件需要{isInstallMode ? "安装" : "重建"}依赖。请选择 Python 运行环境版本：
                     </p>
 
                     {versions.length > 0 ? (
                         <div className="version-section">
-                            <h4>{envName} 版本</h4>
+                            <h4>Python 版本</h4>
                             <div className="version-options">
                                 {versions.map((v: any) => (
                                     <label
@@ -1049,7 +1077,7 @@ function VersionSelectModal({
                         </div>
                     ) : (
                         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
-                            未检测到已安装的 {envName} 环境，请先在「运行环境」页面安装。
+                            未检测到已安装的 Python 环境，请先在「运行环境」页面安装。
                         </p>
                     )}
 
@@ -1057,14 +1085,10 @@ function VersionSelectModal({
                         className="version-confirm-btn"
                         disabled={versions.length === 0}
                         onClick={() => {
-                            if (isPythonPlugin) {
-                                onConfirm(selectedPath, undefined);
-                            } else {
-                                onConfirm(undefined, selectedPath);
-                            }
+                            onConfirm(selectedPath);
                         }}
                     >
-                        确认重建
+                        {isInstallMode ? "确认并安装" : "确认重建"}
                     </button>
                 </div>
             </div>

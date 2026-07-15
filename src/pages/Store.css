@@ -623,61 +623,6 @@
     color: var(--text-primary);
 }
 
-/* Password Modal */
-.password-modal {
-    width: 420px;
-}
-
-.password-hint {
-    font-size: 0.85rem;
-    color: var(--text-secondary);
-    line-height: 1.6;
-    margin-bottom: 16px;
-}
-
-.password-input {
-    width: 100%;
-    padding: 10px 14px;
-    border-radius: 10px;
-    border: 1px solid var(--border-glass);
-    background: transparent;
-    color: var(--text-primary);
-    font-family: var(--font-body);
-    font-size: 0.88rem;
-    outline: none;
-    margin-bottom: 14px;
-    transition: border-color 0.2s ease;
-    box-sizing: border-box;
-}
-
-.password-input:focus {
-    border-color: var(--accent-color);
-}
-
-.password-submit-btn {
-    width: 100%;
-    padding: 10px;
-    border-radius: 10px;
-    border: none;
-    background: var(--accent-color);
-    color: white;
-    font-family: var(--font-body);
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.password-submit-btn:hover {
-    background: var(--accent-hover);
-    box-shadow: var(--accent-glow);
-}
-
-.password-submit-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
 /* Version Select Modal */
 .version-select-modal {
     width: 480px;
