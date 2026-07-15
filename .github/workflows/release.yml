@@ -1,22 +1,28 @@
 name: "Release"
+
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+      - "app-v*"
   workflow_dispatch:
 
 jobs:
-  publish-tauri:
+  build:
     permissions:
-      contents: write
+      contents: read
     strategy:
       fail-fast: false
       matrix:
         include:
-          - platform: 'macos-latest'
-            args: '--target universal-apple-darwin'
-          - platform: 'windows-latest'
-            args: ''
+          - platform: "macos-latest"
+            artifact-name: "bundle-macos"
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: "windows-latest"
+            artifact-name: "bundle-windows"
+            args: ""
+            rust-targets: ""
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -30,26 +36,182 @@ jobs:
       - name: install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
-
-      - name: install dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          targets: ${{ matrix.rust-targets }}
 
       - name: install app dependencies
         run: npm install
 
-      - uses: tauri-apps/tauri-action@v0
+      - name: build app
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build ${{ matrix.args }}
+
+      - name: customize dmg
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: bash scripts/post-build-dmg.sh
+
+      - name: upload bundle artifacts
+        uses: actions/upload-artifact@v4
         with:
-          tagName: app-v__VERSION__
-          releaseName: "Sanka v__VERSION__"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+          name: ${{ matrix.artifact-name }}
+          path: |
+            src-tauri/target/**/release/bundle/**/*.dmg
+            src-tauri/target/**/release/bundle/**/*.exe
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/bundle/**/*.nsis.zip
+            src-tauri/target/**/release/bundle/**/*.app.tar.gz
+            src-tauri/target/**/release/bundle/**/*.sig
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: download bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+
+      - name: prepare release assets and updater manifest
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+
+          const root = process.cwd();
+          const version = require(path.join(root, "package.json")).version;
+          const tag = `app-v${version}`;
+          const repo = process.env.GITHUB_REPOSITORY;
+          const baseUrl = `https://github.com/${repo}/releases/download/${tag}`;
+          const inputDir = path.join(root, "release-artifacts");
+          const outputDir = path.join(root, "release-upload");
+
+          fs.rmSync(outputDir, { recursive: true, force: true });
+          fs.mkdirSync(outputDir, { recursive: true });
+
+          function walk(dir) {
+            if (!fs.existsSync(dir)) return [];
+            return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+              const full = path.join(dir, entry.name);
+              return entry.isDirectory() ? walk(full) : [full];
+            });
+          }
+
+          const files = walk(inputDir);
+          const uploadExtensions = [
+            ".dmg",
+            ".exe",
+            ".msi",
+            ".nsis.zip",
+            ".app.tar.gz",
+            ".sig",
+          ];
+
+          function isUploadAsset(file) {
+            return uploadExtensions.some((ext) => file.endsWith(ext));
+          }
+
+          for (const file of files.filter(isUploadAsset)) {
+            fs.copyFileSync(file, path.join(outputDir, path.basename(file)));
+          }
+
+          function assetUrl(file) {
+            return `${baseUrl}/${encodeURIComponent(path.basename(file))}`;
+          }
+
+          function readSignature(sigFile) {
+            return fs.readFileSync(sigFile, "utf8").trim();
+          }
+
+          function findOne(predicate) {
+            return files.find(predicate);
+          }
+
+          const platforms = {};
+
+          const macTar = findOne((file) => file.endsWith(".app.tar.gz"));
+          if (macTar) {
+            const macSig = `${macTar}.sig`;
+            if (!fs.existsSync(macSig)) {
+              throw new Error(`Missing macOS updater signature: ${macSig}`);
+            }
+            const macEntry = {
+              signature: readSignature(macSig),
+              url: assetUrl(macTar),
+            };
+            platforms["darwin-aarch64"] = macEntry;
+            platforms["darwin-x86_64"] = macEntry;
+          }
+
+          const nsisZip = findOne((file) => file.endsWith(".nsis.zip"));
+          if (nsisZip) {
+            const nsisZipSig = `${nsisZip}.sig`;
+            if (!fs.existsSync(nsisZipSig)) {
+              throw new Error(`Missing Windows updater signature: ${nsisZipSig}`);
+            }
+            platforms["windows-x86_64"] = {
+              signature: readSignature(nsisZipSig),
+              url: assetUrl(nsisZip),
+            };
+          }
+
+          const nsisExe = findOne((file) => file.endsWith(".exe"));
+          if (nsisExe) {
+            const nsisExeSig = `${nsisExe}.sig`;
+            if (!fs.existsSync(nsisExeSig)) {
+              throw new Error(`Missing Windows NSIS signature: ${nsisExeSig}`);
+            }
+            platforms["windows-x86_64-nsis"] = {
+              signature: readSignature(nsisExeSig),
+              url: assetUrl(nsisExe),
+            };
+          }
+
+          if (Object.keys(platforms).length === 0) {
+            throw new Error("No updater platforms were generated.");
+          }
+
+          const latest = {
+            version,
+            notes: "See the assets to download this version and install.",
+            pub_date: new Date().toISOString(),
+            platforms,
+          };
+
+          fs.writeFileSync(
+            path.join(outputDir, "latest.json"),
+            `${JSON.stringify(latest, null, 2)}\n`
+          );
+
+          fs.writeFileSync(process.env.GITHUB_ENV, `RELEASE_VERSION=${version}\nRELEASE_TAG=${tag}\n`, { flag: "a" });
+          NODE
+
+      - name: publish release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-upload/* --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Sanka v${RELEASE_VERSION}" \
+              --notes "See the assets to download this version and install." \
+              --draft=false \
+              --prerelease=false \
+              --latest
+          else
+            gh release create "$RELEASE_TAG" release-upload/* \
+              --title "Sanka v${RELEASE_VERSION}" \
+              --notes "See the assets to download this version and install." \
+              --target "$GITHUB_SHA" \
+              --latest
+          fi
